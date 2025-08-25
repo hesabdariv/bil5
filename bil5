@@ -1,0 +1,1424 @@
+# -*- coding: utf-8 -*-
+# Create the full Python source file with requested modifications and provide as a downloadable file.
+
+import sys
+import json
+import os
+import uuid
+import datetime
+from PySide2.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QLineEdit, QTreeWidget, QFrame,
+    QTreeWidgetItem, QSizePolicy, QSpacerItem, QMessageBox,
+    QDialog, QTableWidget, QTableWidgetItem, QHeaderView,
+    QAbstractItemView, QFileDialog
+)
+from PySide2.QtCore import Qt, QSize
+from PySide2.QtGui import QPixmap, QTextDocument, QGuiApplication
+from PySide2.QtPrintSupport import QPrinter, QPrintDialog
+
+# --- کلاس مدیریت لایسنس ---
+class LicenseManager:
+    def __init__(self):
+        self.license_file = "license.json"
+        self.hardware_id = self.generate_hardware_id()
+        self.license_key = None
+        self.expiration_date = None
+        self.is_licensed = self.load_license()
+
+    def generate_hardware_id(self):
+        """Generates a unique hardware ID using the MAC address."""
+        return str(uuid.UUID(int=uuid.getnode()))
+
+    def load_license(self):
+        """Loads the license key from the license file."""
+        if os.path.exists(self.license_file):
+            try:
+                with open(self.license_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.license_key = data.get("license_key")
+                    self.expiration_date = data.get("expiration_date")
+                return self.verify_license()
+            except (IOError, json.JSONDecodeError):
+                return False
+        return False
+
+    def save_license(self, new_license_key):
+        """Saves the license key to the license file and updates the expiration date."""
+        try:
+            parts = new_license_key.split('_')
+            if len(parts) == 2 and parts[0] == self.hardware_id:
+                exp_date = datetime.datetime.strptime(parts[1], "%Y-%m-%d").date()
+                if exp_date >= datetime.date.today():
+                    self.license_key = new_license_key
+                    self.expiration_date = str(exp_date)
+                    with open(self.license_file, 'w', encoding='utf-8') as f:
+                        json.dump({"license_key": self.license_key, "expiration_date": self.expiration_date}, f, ensure_ascii=False, indent=4)
+                    self.is_licensed = True
+                    return True
+                else:
+                    QMessageBox.warning(None, "خطای لایسنس", "لایسنس منقضی شده است.")
+            else:
+                QMessageBox.warning(None, "خطای لایسنس", "لایسنس نامعتبر است.")
+        except (ValueError, IndexError):
+            QMessageBox.warning(None, "خطای لایسنس", "فرمت لایسنس نامعتبر است.")
+        self.is_licensed = False
+        return False
+
+    def verify_license(self):
+        """Verifies the license key and checks for expiration."""
+        if self.license_key:
+            try:
+                parts = self.license_key.split('_')
+                if len(parts) == 2 and parts[0] == self.hardware_id:
+                    exp_date = datetime.datetime.strptime(parts[1], "%Y-%m-%d").date()
+                    if exp_date >= datetime.date.today():
+                        self.expiration_date = str(exp_date)
+                        return True
+                    else:
+                        return False
+            except (ValueError, IndexError):
+                pass
+        return False
+
+# --- فرم لایسنس ---
+class LicenseDialog(QDialog):
+    def __init__(self, license_manager, parent=None):
+        super().__init__(parent)
+        self.license_manager = license_manager
+        self.setWindowTitle("مدیریت لایسنس")
+        self.setFixedSize(500, 350)
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.init_ui()
+        self.set_style()
+        self.show_hardware_id()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        # HWID
+        hwid_frame = QFrame()
+        hwid_frame.setObjectName("sectionFrame")
+        hwid_layout = QVBoxLayout(hwid_frame)
+
+        hwid_label = QLabel("شناسه سخت‌افزار:")
+        self.hwid_display = QLineEdit()
+        self.hwid_display.setReadOnly(True)
+        hwid_layout.addWidget(hwid_label)
+        hwid_layout.addWidget(self.hwid_display)
+
+        hwid_buttons_layout = QHBoxLayout()
+        self.copy_hwid_btn = QPushButton("کپی شناسه")
+        self.copy_hwid_btn.clicked.connect(self.copy_hardware_id)
+        self.save_hwid_btn = QPushButton("ذخیره شناسه")
+        self.save_hwid_btn.clicked.connect(self.save_hardware_id)
+        hwid_buttons_layout.addWidget(self.copy_hwid_btn)
+        hwid_buttons_layout.addWidget(self.save_hwid_btn)
+        hwid_layout.addLayout(hwid_buttons_layout)
+        main_layout.addWidget(hwid_frame)
+
+        # License Key
+        license_frame = QFrame()
+        license_frame.setObjectName("sectionFrame")
+        license_layout = QVBoxLayout(license_frame)
+
+        license_label = QLabel("ورود لایسنس:")
+        self.license_input = QLineEdit()
+        self.license_input.setPlaceholderText("لایسنس را وارد کنید...")
+        license_layout.addWidget(license_label)
+        license_layout.addWidget(self.license_input)
+
+        license_buttons_layout = QHBoxLayout()
+        self.paste_license_btn = QPushButton("چسباندن")
+        self.paste_license_btn.clicked.connect(self.paste_license)
+        self.load_file_btn = QPushButton("دریافت از فایل")
+        self.load_file_btn.clicked.connect(self.load_license_file)
+        self.apply_license_btn = QPushButton("اعمال لایسنس")
+        self.apply_license_btn.setObjectName("applyLicenseBtn")
+        self.apply_license_btn.clicked.connect(self.apply_license)
+        license_buttons_layout.addWidget(self.paste_license_btn)
+        license_buttons_layout.addWidget(self.load_file_btn)
+        license_buttons_layout.addWidget(self.apply_license_btn)
+        license_layout.addLayout(license_buttons_layout)
+        main_layout.addWidget(license_frame)
+
+    def set_style(self):
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #e6e6e6;
+                border-radius: 15px;
+            }
+            QLabel {
+                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+                font-size: 16px;
+                font-weight: bold;
+                color: #333;
+            }
+            QLineEdit {
+                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+                font-size: 14px;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 8px;
+                background-color: white;
+            }
+            QPushButton {
+                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+                font-size: 14px;
+                color: white;
+                background-color: #007bff;
+                border: none;
+                border-radius: 10px;
+                padding: 10px;
+                margin-top: 5px;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+            QPushButton#applyLicenseBtn {
+                background-color: #28a745;
+            }
+            QPushButton#applyLicenseBtn:hover {
+                background-color: #218838;
+            }
+            QFrame#sectionFrame {
+                border: 1px solid #ccc;
+                border-radius: 10px;
+                padding: 15px;
+                background-color: #f0f0f0;
+            }
+        """)
+
+    def show_hardware_id(self):
+        self.hwid_display.setText(self.license_manager.hardware_id)
+
+    def copy_hardware_id(self):
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(self.license_manager.hardware_id)
+        QMessageBox.information(self, "کپی شد", "شناسه سخت‌افزار با موفقیت در کلیپ‌بورد کپی شد.")
+
+    def save_hardware_id(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره شناسه سخت‌افزار", "hardware_id.txt", "Text Files (*.txt)")
+        if file_path:
+            try:
+                with open(file_path, 'w') as f:
+                    f.write(self.license_manager.hardware_id)
+                QMessageBox.information(self, "ذخیره شد", "شناسه سخت‌افزار با موفقیت ذخیره شد.")
+            except IOError as e:
+                QMessageBox.warning(self, "خطا در ذخیره", f"خطا در ذخیره فایل: {e}")
+
+    def paste_license(self):
+        clipboard = QGuiApplication.clipboard()
+        self.license_input.setText(clipboard.text())
+
+    def load_license_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "انتخاب فایل لایسنس", "", "License Files (*.json)")
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    license_key = data.get("license_key")
+                    if license_key:
+                        self.license_input.setText(license_key)
+                    else:
+                        QMessageBox.warning(self, "خطا", "فایل لایسنس معتبر نیست. کلید 'license_key' یافت نشد.")
+            except (IOError, json.JSONDecodeError) as e:
+                QMessageBox.warning(self, "خطا در باز کردن فایل", f"خطا در پردازش فایل: {e}")
+
+    def apply_license(self):
+        license_key = self.license_input.text().strip()
+        if self.license_manager.save_license(license_key):
+            QMessageBox.information(self, "موفقیت", "لایسنس با موفقیت اعمال شد. برنامه را دوباره اجرا کنید.")
+            self.accept()
+
+
+# --- فرم ورود ---
+class LoginForm(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("ورود به برنامه")
+        self.setFixedSize(350, 250)
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.username = "admin"
+        self.password = "12345"
+        self.init_ui()
+        self.set_login_style()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        title_label = QLabel("ورود به سیستم")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #333; margin-bottom: 20px;")
+        main_layout.addWidget(title_label)
+
+        username_layout = QHBoxLayout()
+        username_layout.setDirection(QHBoxLayout.RightToLeft)
+        username_label = QLabel("نام کاربری:")
+        self.username_input = QLineEdit()
+        self.username_input.setPlaceholderText("نام کاربری را وارد کنید...")
+        username_layout.addWidget(username_label)
+        username_layout.addWidget(self.username_input)
+        main_layout.addLayout(username_layout)
+
+        password_layout = QHBoxLayout()
+        password_layout.setDirection(QHBoxLayout.RightToLeft)
+        password_label = QLabel("رمز عبور:")
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("رمز عبور را وارد کنید...")
+        self.password_input.setEchoMode(QLineEdit.Password)
+        password_layout.addWidget(password_label)
+        password_layout.addWidget(self.password_input)
+        main_layout.addLayout(password_layout)
+
+        main_layout.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+        login_button = QPushButton("ورود")
+        login_button.clicked.connect(self.check_login)
+        main_layout.addWidget(login_button)
+
+    def set_login_style(self):
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f7f7f7;
+                border-radius: 15px;
+            }
+            QLabel {
+                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+                font-size: 16px;
+                color: #555;
+            }
+            QLineEdit {
+                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+                font-size: 14px;
+                padding: 8px;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+            }
+            QPushButton {
+                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+                font-size: 16px;
+                font-weight: bold;
+                color: white;
+                background-color: #007bff;
+                border: none;
+                border-radius: 10px;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+        """)
+
+    def check_login(self):
+        entered_username = self.username_input.text()
+        entered_password = self.password_input.text()
+
+        if entered_username == self.username and entered_password == self.password:
+            self.accept()
+        else:
+            QMessageBox.warning(self, "خطای ورود", "نام کاربری یا رمز عبور اشتباه است.")
+            self.username_input.clear()
+            self.password_input.clear()
+
+# --- فرم ثبت مبلغ پرداختی جدید ---
+class AddPaymentDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("ثبت مبلغ پرداختی جدید")
+        self.setFixedSize(350, 150)
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.amount = 0
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        amount_layout = QHBoxLayout()
+        amount_layout.setDirection(QHBoxLayout.RightToLeft)
+        amount_label = QLabel("مبلغ دریافتی:")
+        self.amount_input = QLineEdit()
+        self.amount_input.setPlaceholderText("مبلغ را به تومان وارد کنید...")
+        self.amount_input.setAlignment(Qt.AlignRight)
+        amount_layout.addWidget(amount_label)
+        amount_layout.addWidget(self.amount_input)
+        main_layout.addLayout(amount_layout)
+
+        save_button = QPushButton("ذخیره")
+        save_button.clicked.connect(self.save_amount)
+        main_layout.addWidget(save_button)
+    
+    def save_amount(self):
+        try:
+            amount_text = self.amount_input.text().strip().replace(",", "").replace(".", "")
+            if amount_text:
+                self.amount = float(amount_text)
+                self.accept()
+            else:
+                QMessageBox.warning(self, "خطا", "لطفاً مبلغ را وارد کنید.")
+        except ValueError:
+            QMessageBox.warning(self, "خطا", "لطفاً یک عدد معتبر وارد کنید.")
+
+# --- فرم ویرایش پرداخت ---
+class EditPaymentDialog(QDialog):
+    def __init__(self, amount, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("ویرایش مبلغ پرداختی")
+        self.setFixedSize(350, 150)
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.new_amount = 0
+        self.init_ui(amount)
+
+    def init_ui(self, amount):
+        main_layout = QVBoxLayout(self)
+        
+        amount_layout = QHBoxLayout()
+        amount_layout.setDirection(QHBoxLayout.RightToLeft)
+        amount_label = QLabel("مبلغ جدید:")
+        self.amount_input = QLineEdit()
+        self.amount_input.setAlignment(Qt.AlignRight)
+        self.amount_input.setText(f"{amount:,.0f}")
+        amount_layout.addWidget(amount_label)
+        amount_layout.addWidget(self.amount_input)
+        main_layout.addLayout(amount_layout)
+
+        save_button = QPushButton("ذخیره")
+        save_button.clicked.connect(self.save_amount)
+        main_layout.addWidget(save_button)
+    
+    def save_amount(self):
+        try:
+            amount_text = self.amount_input.text().strip().replace(",", "").replace(".", "")
+            if amount_text:
+                self.new_amount = float(amount_text)
+                self.accept()
+            else:
+                QMessageBox.warning(self, "خطا", "لطفاً مبلغ را وارد کنید.")
+        except ValueError:
+            QMessageBox.warning(self, "خطا", "لطفاً یک عدد معتبر وارد کنید.")
+
+# --- فرم تاریخچه پرداختی ---
+class PaymentHistoryDialog(QDialog):
+    def __init__(self, person_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"تاریخچه پرداختی‌ها برای {person_data['name']} {person_data['family']}")
+        self.setFixedSize(500, 400)
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.person_data = person_data
+        self.parent = parent
+        self.init_ui()
+        self.populate_table()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["ردیف", "مبلغ", "تاریخ"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.itemDoubleClicked.connect(self.edit_payment_entry)
+        main_layout.addWidget(self.table)
+
+        buttons_layout = QHBoxLayout()
+        self.add_btn = QPushButton("افزودن پرداخت جدید")
+        self.add_btn.clicked.connect(self.add_payment)
+        self.edit_btn = QPushButton("ویرایش پرداخت انتخاب‌شده")
+        self.edit_btn.clicked.connect(self.edit_payment_entry)
+        self.delete_btn = QPushButton("حذف پرداخت انتخاب‌شده")
+        self.delete_btn.clicked.connect(self.delete_payment_entry)
+
+        buttons_layout.addWidget(self.add_btn)
+        buttons_layout.addWidget(self.edit_btn)
+        buttons_layout.addWidget(self.delete_btn)
+        main_layout.addLayout(buttons_layout)
+
+    def populate_table(self):
+        self.table.setRowCount(len(self.person_data["payments"]))
+        for i, entry in enumerate(self.person_data["payments"]):
+            self.table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
+            self.table.setItem(i, 1, QTableWidgetItem(self.parent.format_number(entry["amount"])))
+            self.table.setItem(i, 2, QTableWidgetItem(entry["date"]))
+
+    def add_payment(self):
+        dialog = AddPaymentDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            new_payment = {
+                "amount": dialog.amount,
+                "date": datetime.date.today().strftime('%Y-%m-%d')
+            }
+            self.person_data["payments"].append(new_payment)
+            self.parent.save_data()
+            self.populate_table()
+            self.parent.update_summary_labels()
+            QMessageBox.information(self, "موفقیت", "مبلغ با موفقیت ثبت شد.")
+
+    def edit_payment_entry(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "خطا", "لطفاً یک ردیف را انتخاب کنید.")
+            return
+
+        row = selected_rows[0].row()
+        current_amount = self.person_data["payments"][row]["amount"]
+        
+        dialog = EditPaymentDialog(current_amount, self)
+        if dialog.exec() == QDialog.Accepted:
+            self.person_data["payments"][row]["amount"] = dialog.new_amount
+            self.person_data["payments"][row]["date"] = datetime.date.today().strftime('%Y-%m-%d')
+            self.parent.save_data()
+            self.populate_table()
+            self.parent.update_summary_labels()
+            QMessageBox.information(self, "موفقیت", "مبلغ پرداختی با موفقیت ویرایش شد.")
+
+    def delete_payment_entry(self):
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "خطا", "لطفاً یک ردیف را انتخاب کنید.")
+            return
+        
+        row = selected_rows[0].row()
+        if QMessageBox.question(self, "حذف پرداخت", "آیا مطمئن هستید که می‌خواهید این پرداخت را حذف کنید؟",
+                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            del self.person_data["payments"][row]
+            self.parent.save_data()
+            self.populate_table()
+            self.parent.update_summary_labels()
+            QMessageBox.information(self, "موفقیت", "پرداخت با موفقیت حذف شد.")
+
+
+# --- برنامه اصلی ---
+class BaseApp(QMainWindow):
+    """
+    برنامه اصلی برای مدیریت اشخاص و خدمات با قابلیت ذخیره‌سازی محلی اطلاعات.
+    """
+    def __init__(self):
+        super().__init__()
+
+        # تنظیمات پنجره اصلی
+        self.setWindowTitle("نرم افزار بسیار ساده مدیریت بدهکاران - --------------------  تنظیم کننده علی حدادیان   09153353994")
+        self.setFixedSize(900, 650)
+
+        # مرکز صفحه
+        screen = QApplication.primaryScreen().geometry()
+        x = (screen.width() - self.width()) // 2
+        y = (screen.height() - self.height()) // 2
+        self.move(x, y)
+
+        self.set_ui_style()
+
+        self.main_widget = QWidget()
+        self.setCentralWidget(self.main_widget)
+        self.main_layout = QVBoxLayout(self.main_widget)
+
+        # داده‌ها
+        self.data_file = "data.json"
+        self.data = {"persons": {}, "services": {}}
+        self.selected_person_code = None
+        self.selected_service_code = None
+        self.is_editing_person = False 
+        self.is_editing_service = False 
+
+        # --- بالا: سه ستون ---
+        self.top_frame = QFrame()
+        self.top_frame.setObjectName("topFrame")
+        self.top_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.top_layout = QHBoxLayout(self.top_frame)
+        self.main_layout.addWidget(self.top_frame, stretch=1)
+
+        # ستون چپ: تبلیغات + نمایش جمع‌ها + پرداختی کل
+        self.ad_widget = QWidget()
+        self.ad_widget.setObjectName("adWidget")
+        self.ad_widget.setContentsMargins(10, 10, 10, 10)
+        self.ad_layout = QVBoxLayout(self.ad_widget)
+        self.top_layout.addWidget(self.ad_widget, stretch=1)
+
+        ad_label = QLabel("خدمات فنی مهندسی دهقانی ")
+        ad_label.setAlignment(Qt.AlignCenter)
+        self.ad_layout.addWidget(ad_label)
+
+        ad_image_label = QLabel()
+        try:
+            pixmap = QPixmap("ad_image.png")
+            ad_image_label.setPixmap(pixmap.scaled(QSize(200, 200), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        except Exception:
+            ad_image_label.setText("تصویر یافت نشد")
+        ad_image_label.setAlignment(Qt.AlignCenter)
+        self.ad_layout.addWidget(ad_image_label)
+
+        self.ad_layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
+
+        # نام شخص + خلاصه مالی
+        self.person_name_label = QLabel("")
+        self.person_name_label.setAlignment(Qt.AlignCenter)
+        self.ad_layout.addWidget(self.person_name_label)
+
+        self.person_debt_label = QLabel("مبلغ کل بدهی: ۰ تومان")
+        self.person_debt_label.setObjectName("personDebtLabel")
+        self.person_debt_label.setAlignment(Qt.AlignCenter)
+        self.ad_layout.addWidget(self.person_debt_label)
+        
+        # NEW: Button for adding payment
+        self.show_payment_history_btn = QPushButton("نمایش تاریخچه پرداختی", objectName="controlButton")
+        self.show_payment_history_btn.clicked.connect(self.show_payment_history)
+        self.ad_layout.addWidget(self.show_payment_history_btn)
+
+        self.person_paid_label = QLabel("مبلغ پرداختی: ۰ تومان")
+        self.person_paid_label.setObjectName("personPaidLabel")
+        self.person_paid_label.setAlignment(Qt.AlignCenter)
+        self.ad_layout.addWidget(self.person_paid_label)
+
+        self.person_remaining_label = QLabel("مبلغ باقیمانده: ۰ تومان")
+        self.person_remaining_label.setObjectName("personRemainingLabel")
+        self.person_remaining_label.setAlignment(Qt.AlignCenter)
+        self.ad_layout.addWidget(self.person_remaining_label)
+
+        self.print_invoice_btn = QPushButton("چاپ صورتحساب", objectName="controlButton")
+        self.print_invoice_btn.clicked.connect(self.print_invoice_action)
+        self.ad_layout.addWidget(self.print_invoice_btn)
+
+        self.ad_layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+        # ستون وسط: مدیریت خدمات
+        self.service_widget = QWidget()
+        self.service_widget.setObjectName("serviceWidget")
+        self.service_widget.setContentsMargins(10, 10, 10, 10)
+        self.service_layout = QVBoxLayout(self.service_widget)
+        self.top_layout.addWidget(self.service_widget, stretch=1)
+
+        service_label = QLabel("مدیریت خدمات")
+        service_label.setAlignment(Qt.AlignCenter)
+        self.service_layout.addWidget(service_label)
+
+        # فیلدهای خدمات (بدون مبلغ پرداختی ردیفی)
+        service_id_layout = QHBoxLayout()
+        service_id_layout.setDirection(QHBoxLayout.RightToLeft)
+        service_id_label = QLabel("کد:")
+        service_id_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.service_id_entry = QLineEdit()
+        self.service_id_entry.setAlignment(Qt.AlignRight)
+        self.service_id_entry.setReadOnly(True)
+        service_id_layout.addWidget(service_id_label)
+        service_id_layout.addWidget(self.service_id_entry)
+        self.service_layout.addLayout(service_id_layout)
+
+        service_name_layout = QHBoxLayout()
+        service_name_layout.setDirection(QHBoxLayout.RightToLeft)
+        service_name_label = QLabel("نام کالا:")
+        service_name_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.service_name_entry = QLineEdit()
+        self.service_name_entry.setAlignment(Qt.AlignRight)
+        service_name_layout.addWidget(service_name_label)
+        service_name_layout.addWidget(self.service_name_entry)
+        self.service_layout.addLayout(service_name_layout)
+
+        service_count_layout = QHBoxLayout()
+        service_count_layout.setDirection(QHBoxLayout.RightToLeft)
+        service_count_label = QLabel("تعداد:")
+        service_count_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.service_count_entry = QLineEdit()
+        self.service_count_entry.setAlignment(Qt.AlignRight)
+        service_count_layout.addWidget(service_count_label)
+        service_count_layout.addWidget(self.service_count_entry)
+        self.service_layout.addLayout(service_count_layout)
+
+        # --- NEW: واحد ---
+        service_unit_layout = QHBoxLayout()
+        service_unit_layout.setDirection(QHBoxLayout.RightToLeft)
+        service_unit_label = QLabel("واحد:")
+        service_unit_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.service_unit_entry = QLineEdit()
+        self.service_unit_entry.setAlignment(Qt.AlignRight)
+        self.service_unit_entry.setPlaceholderText("مثلاً عدد، کیلو، متر ...")
+        service_unit_layout.addWidget(service_unit_label)
+        service_unit_layout.addWidget(self.service_unit_entry)
+        self.service_layout.addLayout(service_unit_layout)
+
+        service_price_layout = QHBoxLayout()
+        service_price_layout.setDirection(QHBoxLayout.RightToLeft)
+        service_price_label = QLabel("قیمت واحد:")
+        service_price_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.service_price_entry = QLineEdit()
+        self.service_price_entry.setAlignment(Qt.AlignRight)
+        service_price_layout.addWidget(service_price_label)
+        service_price_layout.addWidget(self.service_price_entry)
+        self.service_layout.addLayout(service_price_layout)
+
+        service_percent_layout = QHBoxLayout()
+        service_percent_layout.setDirection(QHBoxLayout.RightToLeft)
+        service_percent_label = QLabel("درصد:")
+        service_percent_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.service_percent_entry = QLineEdit()
+        self.service_percent_entry.setAlignment(Qt.AlignRight)
+        self.service_percent_entry.setPlaceholderText("درصد دلخواه (مثلاً 15)")
+        service_percent_layout.addWidget(service_percent_label)
+        service_percent_layout.addWidget(self.service_percent_entry)
+        self.service_layout.addLayout(service_percent_layout)
+
+        service_sales_price_layout = QHBoxLayout()
+        service_sales_price_layout.setDirection(QHBoxLayout.RightToLeft)
+        service_sales_price_label = QLabel("قیمت کل:")
+        service_sales_price_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.service_sales_price_entry = QLineEdit()
+        self.service_sales_price_entry.setAlignment(Qt.AlignRight)
+        self.service_sales_price_entry.setReadOnly(True)
+        service_sales_price_layout.addWidget(service_sales_price_label)
+        service_sales_price_layout.addWidget(self.service_sales_price_entry)
+        self.service_layout.addLayout(service_sales_price_layout)
+
+        self.service_layout.addSpacerItem(QSpacerItem(20, 5, QSizePolicy.Minimum, QSizePolicy.Fixed))
+
+        self.service_search_entry = QLineEdit()
+        self.service_search_entry.setPlaceholderText("جستجوی زنده...")
+        self.service_search_entry.setAlignment(Qt.AlignRight)
+        self.service_layout.addWidget(self.service_search_entry)
+
+        service_buttons_layout = QHBoxLayout()
+        service_buttons_layout.setDirection(QHBoxLayout.RightToLeft)
+        
+        self.save_service_btn = QPushButton("افزودن خدمت", objectName="controlButton")
+        self.save_service_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.save_service_btn.clicked.connect(self.save_service_data) 
+        service_buttons_layout.addWidget(self.save_service_btn)
+
+        self.new_service_btn = QPushButton("جدید", objectName="controlButton")
+        self.new_service_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.new_service_btn.clicked.connect(self.start_new_service)
+        service_buttons_layout.addWidget(self.new_service_btn)
+
+        self.delete_service_btn = QPushButton("حذف خدمت", objectName="controlButton")
+        self.delete_service_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.delete_service_btn.clicked.connect(self.delete_service)
+        self.delete_service_btn.setEnabled(False)
+        service_buttons_layout.addWidget(self.delete_service_btn)
+
+        self.service_layout.addLayout(service_buttons_layout)
+
+        # ستون راست: مدیریت اشخاص
+        self.person_widget = QWidget()
+        self.person_widget.setObjectName("personWidget")
+        self.person_widget.setContentsMargins(10, 10, 10, 10)
+        self.person_layout = QVBoxLayout(self.person_widget)
+        self.top_layout.addWidget(self.person_widget, stretch=1)
+
+        person_label = QLabel("مدیریت اشخاص")
+        person_label.setAlignment(Qt.AlignCenter)
+        self.person_layout.addWidget(person_label)
+
+        person_id_layout = QHBoxLayout()
+        person_id_layout.setDirection(QHBoxLayout.RightToLeft)
+        person_id_label = QLabel("کد:")
+        person_id_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.person_id_entry = QLineEdit()
+        self.person_id_entry.setAlignment(Qt.AlignRight)
+        self.person_id_entry.setReadOnly(True)
+        person_id_layout.addWidget(person_id_label)
+        person_id_layout.addWidget(self.person_id_entry)
+        self.person_layout.addLayout(person_id_layout)
+
+        person_name_layout = QHBoxLayout()
+        person_name_layout.setDirection(QHBoxLayout.RightToLeft)
+        person_name_label = QLabel("نام:")
+        person_name_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.person_name_entry = QLineEdit()
+        self.person_name_entry.setAlignment(Qt.AlignRight)
+        person_name_layout.addWidget(person_name_label)
+        person_name_layout.addWidget(self.person_name_entry)
+        self.person_layout.addLayout(person_name_layout)
+
+        person_family_layout = QHBoxLayout()
+        person_family_layout.setDirection(QHBoxLayout.RightToLeft)
+        person_family_label = QLabel("نام خانوادگی:")
+        person_family_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.person_family_entry = QLineEdit()
+        self.person_family_entry.setAlignment(Qt.AlignRight)
+        person_family_layout.addWidget(person_family_label)
+        person_family_layout.addWidget(self.person_family_entry)
+        self.person_layout.addLayout(person_family_layout)
+
+        person_mobile_layout = QHBoxLayout()
+        person_mobile_layout.setDirection(QHBoxLayout.RightToLeft)
+        person_mobile_label = QLabel("شماره موبایل:")
+        person_mobile_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.person_mobile_entry = QLineEdit()
+        self.person_mobile_entry.setAlignment(Qt.AlignRight)
+        person_mobile_layout.addWidget(person_mobile_label)
+        person_mobile_layout.addWidget(self.person_mobile_entry)
+        self.person_layout.addLayout(person_mobile_layout)
+
+        self.person_layout.addSpacerItem(QSpacerItem(20, 5, QSizePolicy.Minimum, QSizePolicy.Fixed))
+
+        self.person_search_entry = QLineEdit()
+        self.person_search_entry.setPlaceholderText("جستجوی زنده...")
+        self.person_search_entry.setAlignment(Qt.AlignRight)
+        self.person_layout.addWidget(self.person_search_entry)
+
+        person_buttons_layout = QHBoxLayout()
+        person_buttons_layout.setDirection(QHBoxLayout.RightToLeft)
+        
+        self.save_person_btn = QPushButton("افزودن شخص", objectName="controlButton")
+        self.save_person_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.save_person_btn.clicked.connect(self.save_person_data) 
+        person_buttons_layout.addWidget(self.save_person_btn)
+
+        self.new_person_btn = QPushButton("جدید", objectName="controlButton")
+        self.new_person_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.new_person_btn.clicked.connect(self.start_new_person)
+        person_buttons_layout.addWidget(self.new_person_btn)
+
+        self.delete_person_btn = QPushButton("حذف شخص", objectName="controlButton")
+        self.delete_person_btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.delete_person_btn.clicked.connect(self.delete_person)
+        person_buttons_layout.addWidget(self.delete_person_btn)
+
+        self.person_layout.addLayout(person_buttons_layout)
+
+        # --- پایین: جدول اصلی ---
+        self.bottom_frame = QFrame()
+        self.bottom_frame.setObjectName("bottomFrame")
+        self.bottom_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.bottom_layout = QVBoxLayout(self.bottom_frame)
+        self.bottom_frame.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.addWidget(self.bottom_frame, stretch=1)
+
+        self.table_buttons_layout = QHBoxLayout()
+        self.table_buttons_layout.setDirection(QHBoxLayout.RightToLeft)
+        self.bottom_layout.addLayout(self.table_buttons_layout)
+
+        self.back_to_persons_btn = QPushButton("بازگشت به لیست اشخاص", objectName="tableButton")
+        self.back_to_persons_btn.setVisible(False)
+        self.back_to_persons_btn.clicked.connect(self.show_persons_in_table)
+        self.table_buttons_layout.addWidget(self.back_to_persons_btn)
+
+        self.data_tree = QTreeWidget()
+        self.data_tree.setHeaderLabels(["کد", "نام", "نام خانوادگی", "شماره موبایل"])
+        self.data_tree.setLayoutDirection(Qt.RightToLeft)
+        self.bottom_layout.addWidget(self.data_tree)
+
+        # اتصال سیگنال‌ها
+        self.data_tree.itemClicked.connect(self.handle_table_single_click)
+        self.data_tree.itemDoubleClicked.connect(self.handle_table_double_click)
+
+        # سیگنال‌های محاسبات قیمت فروش
+        self.service_price_entry.editingFinished.connect(self.format_and_calculate)
+        self.service_percent_entry.editingFinished.connect(self.format_and_calculate)
+        self.service_count_entry.editingFinished.connect(self.format_and_calculate)
+        self.service_price_entry.textChanged.connect(self.handle_price_input)
+        self.service_percent_entry.textChanged.connect(self.handle_price_input)
+        self.service_count_entry.textChanged.connect(self.handle_price_input)
+
+        # سیگنال جستجوی زنده
+        self.person_search_entry.textChanged.connect(self.search_persons)
+        self.service_search_entry.textChanged.connect(self.search_services)
+
+        # بارگذاری
+        self.load_data()
+        self.update_person_buttons_state() # Initial state
+
+    def set_ui_style(self):
+        """Set style using CSS"""
+        stylesheet = """
+        QMainWindow {
+            background-color: #f0f0f0;
+        }
+        #topFrame {
+            background-color: #e0e0e0;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+        }
+        #personWidget, #serviceWidget, #adWidget {
+            background-color: #f5f5f5;
+            border-radius: 15px;
+        }
+        #bottomFrame {
+            background-color: #e0e0e0;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+        }
+        QLabel {
+            font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+            font-size: 16px;
+            color: #333;
+            font-weight: bold;
+        }
+        #personDebtLabel { color: #d9534f; }
+        #personPaidLabel { color: #28a745; }
+        #personRemainingLabel { color: #ffc107; }
+        QPushButton {
+            font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+            font-size: 12px;
+            color: #fff;
+            background-color: #007BFF;
+            border: none;
+            border-radius: 10px;
+            padding: 5px 10px;
+        }
+        QPushButton:hover { background-color: #0056b3; }
+        QPushButton#controlButton { background-color: #28a745; }
+        QPushButton#controlButton:hover { background-color: #218838; }
+        QPushButton#tableButton { background-color: #ffc107; color: #333; }
+        QPushButton#tableButton:hover { background-color: #e0a800; }
+        QLineEdit {
+            font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
+            font-size: 14px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            text-align: right;
+            background-color: #ffffff;
+        }
+        """
+        self.setStyleSheet(stylesheet)
+
+    def format_number(self, value):
+        try:
+            # پاک کردن جداکننده‌های قبلی و تبدیل به عدد
+            cleaned_value = str(value).replace(",", "").replace(".", "")
+            if not cleaned_value:
+                return ""
+            num = float(cleaned_value)
+            return f"{num:,.0f}"
+        except (ValueError, IndexError):
+            return str(value)
+
+    def format_and_calculate(self):
+        # Format numbers on field exit
+        sender = self.sender()
+        if sender == self.service_count_entry:
+            self.service_count_entry.setText(self.format_number(self.service_count_entry.text()))
+        elif sender == self.service_price_entry:
+            self.service_price_entry.setText(self.format_number(self.service_price_entry.text()))
+        elif sender == self.service_percent_entry:
+            self.service_percent_entry.setText(self.format_number(self.service_percent_entry.text()))
+        
+        self.handle_price_input()
+
+    def load_data(self):
+        if os.path.exists(self.data_file):
+            try:
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    self.data = json.load(f)
+            except (IOError, json.JSONDecodeError):
+                self.data = {"persons": {}, "services": {}}
+        self.show_persons_in_table()
+
+    def save_data(self):
+        try:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=4)
+        except IOError as e:
+            QMessageBox.warning(self, "خطا در ذخیره", f"خطا در ذخیره فایل: {e}")
+
+    def clear_entries(self):
+        self.person_id_entry.clear()
+        self.person_name_entry.clear()
+        self.person_family_entry.clear()
+        self.person_mobile_entry.clear()
+        self.clear_service_entries()
+        self.selected_person_code = None
+        self.is_editing_person = False
+        self.is_editing_service = False
+        self.save_person_btn.setText("افزودن شخص")
+        self.save_service_btn.setText("افزودن خدمت")
+        self.update_person_buttons_state()
+
+    def start_new_person(self):
+        self.clear_entries()
+        self.save_person_btn.setText("افزودن شخص")
+        self.is_editing_person = False
+        self.selected_person_code = None
+
+    def clear_service_entries(self):
+        self.service_id_entry.clear()
+        self.service_name_entry.clear()
+        self.service_count_entry.clear()
+        self.service_unit_entry.clear()
+        self.service_price_entry.clear()
+        self.service_percent_entry.clear()
+        self.service_sales_price_entry.clear()
+        self.is_editing_service = False
+        self.selected_service_code = None
+        self.save_service_btn.setText("افزودن خدمت")
+        self.delete_service_btn.setEnabled(False)
+
+    def start_new_service(self):
+        self.clear_service_entries()
+        self.save_service_btn.setText("افزودن خدمت")
+        self.is_editing_service = False
+        self.selected_service_code = None
+        self.delete_service_btn.setEnabled(False)
+
+    def update_person_buttons_state(self):
+        """
+        Enables or disables person-related buttons based on whether a person is selected.
+        """
+        is_person_selected = bool(self.selected_person_code)
+        self.show_payment_history_btn.setEnabled(is_person_selected)
+        self.print_invoice_btn.setEnabled(is_person_selected)
+        self.save_service_btn.setEnabled(is_person_selected)
+
+    def generate_person_code(self):
+        codes = [int(code) for code in self.data["persons"].keys()]
+        if not codes:
+            return 1
+        return max(codes) + 1
+
+    def generate_service_code(self):
+        codes = [int(code) for code in self.data["services"].keys()]
+        if not codes:
+            return 1
+        return max(codes) + 1
+
+    def handle_price_input(self):
+        try:
+            # پاک کردن کاما و نقطه از ورودی
+            count_text = self.service_count_entry.text().replace(",", "").replace(".", "")
+            price_text = self.service_price_entry.text().replace(",", "").replace(".", "")
+            percent_text = self.service_percent_entry.text().replace(",", "").replace(".", "")
+
+            count = float(count_text or 0)
+            price = float(price_text or 0)
+            percent = float(percent_text or 0)
+            
+            total_price = (count * price) * (1 + (percent / 100))
+            self.service_sales_price_entry.setText(f"{total_price:,.0f}")
+        except ValueError:
+            self.service_sales_price_entry.setText("خطا در محاسبه")
+    
+    def get_paid_total(self, person_code):
+        return sum(item.get('amount', 0) for item in self.data["persons"][person_code].get("payments", []))
+
+    def update_summary_labels(self):
+        if self.selected_person_code:
+            person_data = self.data["persons"][self.selected_person_code]
+            total_purchases = sum(float(s.get("total_price", 0)) for s in person_data.get("services", {}).values())
+            paid_total = self.get_paid_total(self.selected_person_code)
+            remaining_debt = total_purchases - paid_total
+            self.person_debt_label.setText(f"جمع کل خرید: {total_purchases:,.0f} تومان")
+            self.person_paid_label.setText(f"مبلغ پرداختی: {paid_total:,.0f} تومان")
+            self.person_remaining_label.setText(f"مانده بدهکاری: {remaining_debt:,.0f} تومان")
+        else:
+            self.person_debt_label.setText("مبلغ کل بدهی: ۰ تومان")
+            self.person_paid_label.setText("مبلغ پرداختی: ۰ تومان")
+            self.person_remaining_label.setText("مبلغ باقیمانده: ۰ تومان")
+
+    def show_payment_history(self):
+        if not self.selected_person_code:
+            QMessageBox.warning(self, "خطا", "لطفا یک شخص را انتخاب کنید.")
+            return
+        
+        person_data = self.data["persons"][self.selected_person_code]
+        dialog = PaymentHistoryDialog(person_data, self)
+        dialog.exec()
+
+    def show_persons_in_table(self):
+        self.data_tree.clear()
+        self.data_tree.setHeaderLabels(["کد", "نام", "نام خانوادگی", "شماره موبایل", "جمع کل خرید", "مبلغ پرداختی", "مانده بدهکاری"])
+        self.back_to_persons_btn.setVisible(False)
+        self.update_person_buttons_state()
+        self.clear_entries()
+
+        for code, person in self.data["persons"].items():
+            total_purchases = sum(float(s.get("total_price", 0)) for s in person.get("services", {}).values())
+            paid_total = self.get_paid_total(code)
+            remaining_debt = total_purchases - paid_total
+            item = QTreeWidgetItem([
+                str(code),
+                person["name"],
+                person["family"],
+                person["mobile"],
+                f"{total_purchases:,.0f}",
+                f"{paid_total:,.0f}",
+                f"{remaining_debt:,.0f}"
+            ])
+            self.data_tree.addTopLevelItem(item)
+
+    def show_services_in_table(self):
+        if not self.selected_person_code:
+            QMessageBox.warning(self, "خطا", "لطفاً ابتدا یک شخص را انتخاب کنید.")
+            return
+
+        self.data_tree.clear()
+        self.data_tree.setHeaderLabels(["کد خدمت", "نام کالا", "تعداد", "واحد", "قیمت واحد", "درصد", "قیمت کل"])
+        self.back_to_persons_btn.setVisible(True)
+        self.update_person_buttons_state()
+        self.clear_service_entries()
+
+        person_services = self.data["persons"][self.selected_person_code].get("services", {})
+        for code, service in person_services.items():
+            item = QTreeWidgetItem([
+                str(code),
+                service["name"],
+                self.format_number(service.get("count", 0)),
+                service.get("unit", ""),
+                self.format_number(service.get("price", 0)),
+                f"{float(service.get('percent', 0)):,.0f}%",
+                self.format_number(service.get("total_price", 0))
+            ])
+            self.data_tree.addTopLevelItem(item)
+
+    def handle_table_single_click(self, item, column):
+        """
+        Handles single clicks to load data into entry fields, for both persons and services.
+        """
+        current_headers = [self.data_tree.headerItem().text(i) for i in range(self.data_tree.header().count())]
+        clicked_code = item.text(0)
+
+        if "نام خانوادگی" in current_headers:
+            self.clear_service_entries()
+            self.selected_person_code = clicked_code
+            self.load_person_data(clicked_code)
+            self.update_person_buttons_state()
+            self.is_editing_person = True 
+            self.save_person_btn.setText("ذخیره تغییرات")
+            
+        elif "نام کالا" in current_headers:
+            self.selected_service_code = clicked_code
+            self.load_service_data(clicked_code)
+            self.is_editing_service = True
+            self.save_service_btn.setText("ذخیره تغییرات")
+            self.delete_service_btn.setEnabled(True)
+
+    def handle_table_double_click(self, item, column):
+        """ Handles double clicks to show services for a person. """
+        current_headers = [self.data_tree.headerItem().text(i) for i in range(self.data_tree.header().count())]
+        clicked_code = item.text(0)
+
+        if "نام خانوادگی" in current_headers:
+            self.selected_person_code = clicked_code
+            self.load_person_data(clicked_code)
+            self.show_services_in_table()
+
+    def save_person_data(self):
+        name = self.person_name_entry.text().strip()
+        family = self.person_family_entry.text().strip()
+        mobile = self.person_mobile_entry.text().strip()
+        if not name or not family or not mobile:
+            QMessageBox.warning(self, "خطا", "لطفاً تمام فیلدهای نام، نام خانوادگی و موبایل را پر کنید.")
+            return
+
+        if self.is_editing_person and self.selected_person_code:
+            code = self.selected_person_code
+            self.data["persons"][code]["name"] = name
+            self.data["persons"][code]["family"] = family
+            self.data["persons"][code]["mobile"] = mobile
+        else:
+            person_code = str(self.generate_person_code())
+            self.data["persons"][person_code] = {
+                "name": name,
+                "family": family,
+                "mobile": mobile,
+                "services": {},
+                "payments": []
+            }
+        
+        self.save_data()
+        self.show_persons_in_table()
+        self.clear_entries()
+
+    def delete_person(self):
+        if not self.person_id_entry.text():
+            QMessageBox.warning(self, "خطا", "لطفاً یک شخص را از لیست انتخاب کنید.")
+            return
+
+        code = self.person_id_entry.text()
+        if QMessageBox.question(self, "حذف شخص", "آیا مطمئن هستید که می‌خواهید این شخص را حذف کنید؟ این عمل برگشت‌ناپذیر است.",
+                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            if code in self.data["persons"]:
+                del self.data["persons"][code]
+                self.save_data()
+                self.show_persons_in_table()
+                self.clear_entries()
+    
+    def save_service_data(self):
+        if not self.selected_person_code:
+            QMessageBox.warning(self, "خطا", "لطفاً ابتدا یک شخص را انتخاب کنید.")
+            return
+        
+        name = self.service_name_entry.text().strip()
+        count_text = self.service_count_entry.text().strip().replace(",", "").replace(".", "")
+        unit = self.service_unit_entry.text().strip()
+        price_text = self.service_price_entry.text().strip().replace(",", "").replace(".", "")
+        percent_text = self.service_percent_entry.text().strip().replace(",", "").replace(".", "")
+
+        if not name or not count_text or not unit or not price_text or not percent_text:
+            QMessageBox.warning(self, "خطا", "لطفاً تمام فیلدهای خدمات را پر کنید.")
+            return
+
+        try:
+            count = float(count_text)
+            price = float(price_text)
+            percent = float(percent_text)
+            total_price = (count * price) * (1 + (percent / 100))
+        except ValueError:
+            QMessageBox.warning(self, "خطا", "لطفاً مقادیر عددی معتبر و بدون اعشار وارد کنید.")
+            return
+
+        if self.is_editing_service and self.selected_service_code:
+            code = self.selected_service_code
+            self.data["persons"][self.selected_person_code]["services"][code] = {
+                "name": name,
+                "count": str(count),
+                "unit": unit,
+                "price": str(price),
+                "percent": str(percent),
+                "total_price": str(total_price)
+            }
+            if code in self.data["services"]:
+                 self.data["services"][code] = {
+                    "name": name,
+                    "count": str(count),
+                    "unit": unit,
+                    "price": str(price),
+                    "percent": str(percent),
+                    "total_price": str(total_price)
+                }
+        else:
+            service_code = str(self.generate_service_code())
+            self.data["persons"][self.selected_person_code]["services"][service_code] = {
+                "name": name,
+                "count": str(count),
+                "unit": unit,
+                "price": str(price),
+                "percent": str(percent),
+                "total_price": str(total_price)
+            }
+            self.data["services"][service_code] = {
+                "name": name,
+                "count": str(count),
+                "unit": unit,
+                "price": str(price),
+                "percent": str(percent),
+                "total_price": str(total_price)
+            }
+
+        self.save_data()
+        self.show_services_in_table()
+        self.update_summary_labels()
+        self.clear_service_entries()
+        self.save_service_btn.setText("افزودن خدمت")
+        self.delete_service_btn.setEnabled(False)
+
+    def delete_service(self):
+        if not self.service_id_entry.text():
+            QMessageBox.warning(self, "خطا", "لطفاً یک خدمت را از لیست انتخاب کنید.")
+            return
+        if not self.selected_person_code:
+            QMessageBox.warning(self, "خطا", "ابتدا شخص مربوطه را انتخاب کنید.")
+            return
+
+        code = self.service_id_entry.text()
+        if QMessageBox.question(self, "حذف خدمت", "آیا مطمئن هستید که می‌خواهید این خدمت را حذف کنید؟ این عمل برگشت‌ناپذیر است.",
+                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            if code in self.data["persons"][self.selected_person_code]["services"]:
+                del self.data["persons"][self.selected_person_code]["services"][code]
+                if code in self.data["services"]:
+                    del self.data["services"][code]
+                self.save_data()
+                self.show_services_in_table()
+                self.update_summary_labels()
+                self.clear_service_entries()
+                self.save_service_btn.setEnabled(True)
+                self.delete_service_btn.setEnabled(False)
+
+    def load_person_data(self, code):
+        person = self.data["persons"][code]
+        self.person_id_entry.setText(str(code))
+        self.person_name_entry.setText(person["name"])
+        self.person_family_entry.setText(person["family"])
+        self.person_mobile_entry.setText(person["mobile"])
+        self.person_name_label.setText(f"نام شخص: {person['name']} {person['family']}")
+        self.update_summary_labels()
+
+    def load_service_data(self, code):
+        person_services = self.data["persons"][self.selected_person_code]["services"]
+        if code in person_services:
+            service = person_services[code]
+            self.service_id_entry.setText(str(code))
+            self.service_name_entry.setText(service["name"])
+            self.service_count_entry.setText(self.format_number(service.get("count", 0)))
+            self.service_unit_entry.setText(service.get("unit", ""))
+            self.service_price_entry.setText(self.format_number(service.get("price", 0)))
+            self.service_percent_entry.setText(self.format_number(service.get("percent", 0)))
+            self.service_sales_price_entry.setText(self.format_number(service.get("total_price", 0)))
+
+    def search_persons(self, text):
+        self.data_tree.clear()
+        if not text:
+            self.show_persons_in_table()
+            return
+        text = text.lower()
+        for code, person in self.data["persons"].items():
+            if text in person["name"].lower() or text in person["family"].lower() or text in person["mobile"].lower():
+                total_purchases = sum(float(s.get("total_price", 0)) for s in person.get("services", {}).values())
+                paid_total = self.get_paid_total(code)
+                remaining_debt = total_purchases - paid_total
+                item = QTreeWidgetItem([
+                    str(code),
+                    person["name"],
+                    person["family"],
+                    person["mobile"],
+                    f"{total_purchases:,.0f}",
+                    f"{paid_total:,.0f}",
+                    f"{remaining_debt:,.0f}"
+                ])
+                self.data_tree.addTopLevelItem(item)
+
+    def search_services(self, text):
+        self.data_tree.clear()
+        if not self.selected_person_code:
+            return
+        text = text.lower()
+        person_services = self.data["persons"][self.selected_person_code].get("services", {})
+        for code, service in person_services.items():
+            if text in service["name"].lower() or text in str(code).lower():
+                item = QTreeWidgetItem([
+                    str(code),
+                    service["name"],
+                    self.format_number(service.get("count", 0)),
+                    service.get("unit", ""),
+                    self.format_number(service.get("price", 0)),
+                    f"{float(service.get('percent', 0)):,.0f}%",
+                    self.format_number(service.get("total_price", 0))
+                ])
+                self.data_tree.addTopLevelItem(item)
+
+    def print_invoice_action(self):
+        if not self.selected_person_code:
+            QMessageBox.warning(self, "خطا", "لطفا یک شخص را برای چاپ صورتحساب انتخاب کنید.")
+            return
+
+        person_data = self.data["persons"][self.selected_person_code]
+        person_name = f"{person_data['name']} {person_data['family']}"
+        paid_total = self.get_paid_total(self.selected_person_code)
+        invoice_html = self.generate_invoice_html(person_name, person_data["services"], paid_total)
+
+        printer = QPrinter()
+        dialog = QPrintDialog(printer, self)
+        if dialog.exec() == QDialog.Accepted:
+            document = QTextDocument()
+            document.setHtml(invoice_html)
+            document.print(printer)
+            QMessageBox.information(self, "چاپ", "صورتحساب با موفقیت ارسال شد.")
+
+    def generate_invoice_html(self, person_name, services, paid_amount):
+        total_price = sum(float(s.get("total_price", 0)) for s in services.values())
+        remaining_debt = total_price - paid_amount
+
+        table_rows = ""
+        for code, service in services.items():
+            table_rows += f"""
+            <tr>
+                <td>{self.format_number(service.get('total_price', 0))}</td>
+                <td>{float(service.get('percent', 0)):,.0f}%</td>
+                <td>{self.format_number(service.get('price', 0))}</td>
+                <td>{service.get('unit', '')}</td>
+                <td>{self.format_number(service.get('count', 0))}</td>
+                <td>{service.get('name', '')}</td>
+                <td>{code}</td>
+            </tr>
+            """
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="fa" dir="rtl">
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{
+                    font-family: 'B Nazanin', 'Sahel', 'Vazirmatn', sans-serif;
+                    direction: rtl;
+                    text-align: right;
+                    font-size: 14px;
+                }}
+                .header {{ text-align: center; margin-bottom: 20px; }}
+                .invoice-details {{ margin-bottom: 20px; }}
+                .invoice-details p {{ margin: 5px 0; }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 20px;
+                }}
+                th, td {{
+                    border: 1px solid #000;
+                    padding: 8px;
+                    text-align: right;
+                }}
+                th {{ background-color: #f2f2f2; }}
+                .summary {{
+                    margin-top: 20px;
+                    text-align: left;
+                    float: left;
+                    width: 40%;
+                }}
+                .signature {{
+                    margin-top: 50px;
+                    text-align: left;
+                }}
+                .total-row {{ font-weight: bold; background-color: #e6e6e6; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h2>صورتحساب خدمات</h2>
+                <p>خدمات فنی مهندسی دهقانی</p>
+                <p>تلفن: ۰۹۱۵۳۳۵۳۹۹۴</p>
+            </div>
+            <div class="invoice-details">
+                <p><strong>تاریخ:</strong> {datetime.date.today().strftime('%Y-%m-%d')}</p>
+                <p><strong>نام شخص:</strong> {person_name}</p>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>قیمت کل</th>
+                        <th>درصد</th>
+                        <th>قیمت واحد</th>
+                        <th>واحد</th>
+                        <th>تعداد</th>
+                        <th>نام کالا</th>
+                        <th>کد خدمت</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {table_rows}
+                </tbody>
+            </table>
+            <div class="summary">
+                <p class="total-row"><strong>جمع کل خرید:</strong> {self.format_number(total_price)} تومان</p>
+                <p class="total-row"><strong>مبلغ پرداختی:</strong> {self.format_number(paid_amount)} تومان</p>
+                <p class="total-row"><strong>مانده بدهکاری:</strong> {self.format_number(remaining_debt)} تومان</p>
+            </div>
+            <div class="signature">
+                <p>امضا و مهر:</p>
+                <br><br>
+                <p>-------------------------</p>
+            </div>
+        </body>
+        </html>
+        """
+        return html_content
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    
+    # Check for license
+    license_manager = LicenseManager()
+    if not license_manager.is_licensed:
+        license_dialog = LicenseDialog(license_manager)
+        if license_dialog.exec() == QDialog.Accepted:
+            QMessageBox.information(None, "بازنشانی", "برنامه برای اعمال لایسنس جدید، مجدداً راه‌اندازی می‌شود.")
+            sys.exit(0)
+        else:
+            QMessageBox.warning(None, "پایان", "شما بدون لایسنس نمی‌توانید از برنامه استفاده کنید.")
+            sys.exit(-1)
+
+    # If licensed, proceed to login
+    login_form = LoginForm()
+    if login_form.exec() == QDialog.Accepted:
+        main_app = BaseApp()
+        main_app.show()
+        sys.exit(app.exec())
+    else:
+        sys.exit(-1)
