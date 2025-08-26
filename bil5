@@ -1,403 +1,242 @@
-# -*- coding: utf-8 -*-
-# Create the full Python source file with requested modifications and provide as a downloadable file.
-
 import sys
-import json
 import os
-import uuid
+import json
 import datetime
-from PySide2.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QLineEdit, QTreeWidget, QFrame,
-    QTreeWidgetItem, QSizePolicy, QSpacerItem, QMessageBox,
-    QDialog, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QFileDialog
-)
-from PySide2.QtCore import Qt, QSize
-from PySide2.QtGui import QPixmap, QTextDocument, QGuiApplication
-from PySide2.QtPrintSupport import QPrinter, QPrintDialog
+import uuid
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                             QMessageBox, QLineEdit, QPushButton, QLabel, QFrame,
+                             QSizePolicy, QTreeWidget, QTreeWidgetItem, QDialog,
+                             QAbstractItemView, QTableWidget, QTableWidgetItem,
+                             QHeaderView, QSpacerItem, QFormLayout)
+from PyQt5.QtGui import QPixmap, QIcon, QTextDocument
+from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtPrintSupport import QPrinter, QPrintDialog
 
-# --- کلاس مدیریت لایسنس ---
+# --- مدیریت لایسنس و لاگین ---
+
+LICENSE_FILE = "license.key"
+CREDENTIALS_FILE = "credentials.json"
+
 class LicenseManager:
     def __init__(self):
-        self.license_file = "license.json"
-        self.hardware_id = self.generate_hardware_id()
-        self.license_key = None
-        self.expiration_date = None
-        self.is_licensed = self.load_license()
+        self.is_licensed = self.check_license()
 
-    def generate_hardware_id(self):
-        """Generates a unique hardware ID using the MAC address."""
-        return str(uuid.UUID(int=uuid.getnode()))
-
-    def load_license(self):
-        """Loads the license key from the license file."""
-        if os.path.exists(self.license_file):
+    def check_license(self):
+        if os.path.exists(LICENSE_FILE):
             try:
-                with open(self.license_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.license_key = data.get("license_key")
-                    self.expiration_date = data.get("expiration_date")
-                return self.verify_license()
-            except (IOError, json.JSONDecodeError):
+                with open(LICENSE_FILE, 'r') as f:
+                    license_key = f.read().strip()
+                return self.is_valid_license(license_key)
+            except IOError:
                 return False
         return False
 
-    def save_license(self, new_license_key):
-        """Saves the license key to the license file and updates the expiration date."""
+    def is_valid_license(self, key):
         try:
-            parts = new_license_key.split('_')
-            if len(parts) == 2 and parts[0] == self.hardware_id:
-                exp_date = datetime.datetime.strptime(parts[1], "%Y-%m-%d").date()
-                if exp_date >= datetime.date.today():
-                    self.license_key = new_license_key
-                    self.expiration_date = str(exp_date)
-                    with open(self.license_file, 'w', encoding='utf-8') as f:
-                        json.dump({"license_key": self.license_key, "expiration_date": self.expiration_date}, f, ensure_ascii=False, indent=4)
-                    self.is_licensed = True
-                    return True
-                else:
-                    QMessageBox.warning(None, "خطای لایسنس", "لایسنس منقضی شده است.")
-            else:
-                QMessageBox.warning(None, "خطای لایسنس", "لایسنس نامعتبر است.")
-        except (ValueError, IndexError):
-            QMessageBox.warning(None, "خطای لایسنس", "فرمت لایسنس نامعتبر است.")
-        self.is_licensed = False
-        return False
+            uuid.UUID(key)
+            return True
+        except ValueError:
+            return False
 
-    def verify_license(self):
-        """Verifies the license key and checks for expiration."""
-        if self.license_key:
-            try:
-                parts = self.license_key.split('_')
-                if len(parts) == 2 and parts[0] == self.hardware_id:
-                    exp_date = datetime.datetime.strptime(parts[1], "%Y-%m-%d").date()
-                    if exp_date >= datetime.date.today():
-                        self.expiration_date = str(exp_date)
-                        return True
-                    else:
-                        return False
-            except (ValueError, IndexError):
-                pass
-        return False
+    def generate_license_key(self):
+        return str(uuid.uuid4())
 
-# --- فرم لایسنس ---
+    def save_license(self, key):
+        try:
+            with open(LICENSE_FILE, 'w') as f:
+                f.write(key)
+            self.is_licensed = True
+            return True
+        except IOError:
+            return False
+
 class LicenseDialog(QDialog):
     def __init__(self, license_manager, parent=None):
         super().__init__(parent)
         self.license_manager = license_manager
-        self.setWindowTitle("مدیریت لایسنس")
-        self.setFixedSize(500, 350)
+        self.setWindowTitle("ثبت لایسنس")
+        self.setFixedSize(400, 200)
         self.setLayoutDirection(Qt.RightToLeft)
-        self.init_ui()
-        self.set_style()
-        self.show_hardware_id()
+        
+        layout = QVBoxLayout(self)
+        
+        info_label = QLabel("لطفاً لایسنس خود را وارد کنید یا یک لایسنس جدید تولید نمایید.")
+        layout.addWidget(info_label)
 
-    def init_ui(self):
-        main_layout = QVBoxLayout(self)
+        self.license_entry = QLineEdit()
+        self.license_entry.setPlaceholderText("لایسنس را اینجا وارد کنید...")
+        layout.addWidget(self.license_entry)
 
-        # HWID
-        hwid_frame = QFrame()
-        hwid_frame.setObjectName("sectionFrame")
-        hwid_layout = QVBoxLayout(hwid_frame)
+        buttons_layout = QHBoxLayout()
+        self.register_btn = QPushButton("ثبت لایسنس")
+        self.register_btn.clicked.connect(self.register_license)
+        self.generate_btn = QPushButton("تولید لایسنس")
+        self.generate_btn.clicked.connect(self.generate_new_license)
 
-        hwid_label = QLabel("شناسه سخت‌افزار:")
-        self.hwid_display = QLineEdit()
-        self.hwid_display.setReadOnly(True)
-        hwid_layout.addWidget(hwid_label)
-        hwid_layout.addWidget(self.hwid_display)
+        buttons_layout.addWidget(self.register_btn)
+        buttons_layout.addWidget(self.generate_btn)
+        layout.addLayout(buttons_layout)
 
-        hwid_buttons_layout = QHBoxLayout()
-        self.copy_hwid_btn = QPushButton("کپی شناسه")
-        self.copy_hwid_btn.clicked.connect(self.copy_hardware_id)
-        self.save_hwid_btn = QPushButton("ذخیره شناسه")
-        self.save_hwid_btn.clicked.connect(self.save_hardware_id)
-        hwid_buttons_layout.addWidget(self.copy_hwid_btn)
-        hwid_buttons_layout.addWidget(self.save_hwid_btn)
-        hwid_layout.addLayout(hwid_buttons_layout)
-        main_layout.addWidget(hwid_frame)
-
-        # License Key
-        license_frame = QFrame()
-        license_frame.setObjectName("sectionFrame")
-        license_layout = QVBoxLayout(license_frame)
-
-        license_label = QLabel("ورود لایسنس:")
-        self.license_input = QLineEdit()
-        self.license_input.setPlaceholderText("لایسنس را وارد کنید...")
-        license_layout.addWidget(license_label)
-        license_layout.addWidget(self.license_input)
-
-        license_buttons_layout = QHBoxLayout()
-        self.paste_license_btn = QPushButton("چسباندن")
-        self.paste_license_btn.clicked.connect(self.paste_license)
-        self.load_file_btn = QPushButton("دریافت از فایل")
-        self.load_file_btn.clicked.connect(self.load_license_file)
-        self.apply_license_btn = QPushButton("اعمال لایسنس")
-        self.apply_license_btn.setObjectName("applyLicenseBtn")
-        self.apply_license_btn.clicked.connect(self.apply_license)
-        license_buttons_layout.addWidget(self.paste_license_btn)
-        license_buttons_layout.addWidget(self.load_file_btn)
-        license_buttons_layout.addWidget(self.apply_license_btn)
-        license_layout.addLayout(license_buttons_layout)
-        main_layout.addWidget(license_frame)
-
-    def set_style(self):
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #e6e6e6;
-                border-radius: 15px;
-            }
-            QLabel {
-                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
-                font-size: 16px;
-                font-weight: bold;
-                color: #333;
-            }
-            QLineEdit {
-                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
-                font-size: 14px;
-                padding: 8px;
-                border: 1px solid #ccc;
-                border-radius: 8px;
-                background-color: white;
-            }
-            QPushButton {
-                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
-                font-size: 14px;
-                color: white;
-                background-color: #007bff;
-                border: none;
-                border-radius: 10px;
-                padding: 10px;
-                margin-top: 5px;
-            }
-            QPushButton:hover {
-                background-color: #0056b3;
-            }
-            QPushButton#applyLicenseBtn {
-                background-color: #28a745;
-            }
-            QPushButton#applyLicenseBtn:hover {
-                background-color: #218838;
-            }
-            QFrame#sectionFrame {
-                border: 1px solid #ccc;
-                border-radius: 10px;
-                padding: 15px;
-                background-color: #f0f0f0;
-            }
-        """)
-
-    def show_hardware_id(self):
-        self.hwid_display.setText(self.license_manager.hardware_id)
-
-    def copy_hardware_id(self):
-        clipboard = QGuiApplication.clipboard()
-        clipboard.setText(self.license_manager.hardware_id)
-        QMessageBox.information(self, "کپی شد", "شناسه سخت‌افزار با موفقیت در کلیپ‌بورد کپی شد.")
-
-    def save_hardware_id(self):
-        file_path, _ = QFileDialog.getSaveFileName(self, "ذخیره شناسه سخت‌افزار", "hardware_id.txt", "Text Files (*.txt)")
-        if file_path:
-            try:
-                with open(file_path, 'w') as f:
-                    f.write(self.license_manager.hardware_id)
-                QMessageBox.information(self, "ذخیره شد", "شناسه سخت‌افزار با موفقیت ذخیره شد.")
-            except IOError as e:
-                QMessageBox.warning(self, "خطا در ذخیره", f"خطا در ذخیره فایل: {e}")
-
-    def paste_license(self):
-        clipboard = QGuiApplication.clipboard()
-        self.license_input.setText(clipboard.text())
-
-    def load_license_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "انتخاب فایل لایسنس", "", "License Files (*.json)")
-        if file_path:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    license_key = data.get("license_key")
-                    if license_key:
-                        self.license_input.setText(license_key)
-                    else:
-                        QMessageBox.warning(self, "خطا", "فایل لایسنس معتبر نیست. کلید 'license_key' یافت نشد.")
-            except (IOError, json.JSONDecodeError) as e:
-                QMessageBox.warning(self, "خطا در باز کردن فایل", f"خطا در پردازش فایل: {e}")
-
-    def apply_license(self):
-        license_key = self.license_input.text().strip()
-        if self.license_manager.save_license(license_key):
-            QMessageBox.information(self, "موفقیت", "لایسنس با موفقیت اعمال شد. برنامه را دوباره اجرا کنید.")
-            self.accept()
+    def register_license(self):
+        key = self.license_entry.text().strip()
+        if self.license_manager.is_valid_license(key):
+            if self.license_manager.save_license(key):
+                QMessageBox.information(self, "موفقیت", "لایسنس با موفقیت ثبت شد.")
+                self.accept()
+            else:
+                QMessageBox.critical(self, "خطا", "خطا در ذخیره لایسنس. لطفاً دوباره امتحان کنید.")
+        else:
+            QMessageBox.warning(self, "خطا", "لایسنس نامعتبر است.")
+            
+    def generate_new_license(self):
+        key = self.license_manager.generate_license_key()
+        self.license_entry.setText(key)
 
 
-# --- فرم ورود ---
 class LoginForm(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ورود به برنامه")
-        self.setFixedSize(350, 250)
+        self.setWindowTitle("ورود")
+        self.setFixedSize(300, 150)
         self.setLayoutDirection(Qt.RightToLeft)
-        self.username = "admin"
-        self.password = "12345"
-        self.init_ui()
-        self.set_login_style()
 
-    def init_ui(self):
-        main_layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self)
 
-        title_label = QLabel("ورود به سیستم")
-        title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #333; margin-bottom: 20px;")
-        main_layout.addWidget(title_label)
+        self.username_entry = QLineEdit()
+        self.username_entry.setPlaceholderText("نام کاربری")
+        layout.addWidget(self.username_entry)
 
-        username_layout = QHBoxLayout()
-        username_layout.setDirection(QHBoxLayout.RightToLeft)
-        username_label = QLabel("نام کاربری:")
-        self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("نام کاربری را وارد کنید...")
-        username_layout.addWidget(username_label)
-        username_layout.addWidget(self.username_input)
-        main_layout.addLayout(username_layout)
+        self.password_entry = QLineEdit()
+        self.password_entry.setPlaceholderText("رمز عبور")
+        self.password_entry.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.password_entry)
 
-        password_layout = QHBoxLayout()
-        password_layout.setDirection(QHBoxLayout.RightToLeft)
-        password_label = QLabel("رمز عبور:")
-        self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("رمز عبور را وارد کنید...")
-        self.password_input.setEchoMode(QLineEdit.Password)
-        password_layout.addWidget(password_label)
-        password_layout.addWidget(self.password_input)
-        main_layout.addLayout(password_layout)
-
-        main_layout.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Minimum, QSizePolicy.Expanding))
-
-        login_button = QPushButton("ورود")
-        login_button.clicked.connect(self.check_login)
-        main_layout.addWidget(login_button)
-
-    def set_login_style(self):
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f7f7f7;
-                border-radius: 15px;
-            }
-            QLabel {
-                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
-                font-size: 16px;
-                color: #555;
-            }
-            QLineEdit {
-                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
-                font-size: 14px;
-                padding: 8px;
-                border: 1px solid #ddd;
-                border-radius: 8px;
-            }
-            QPushButton {
-                font-family: 'B Nazanin', 'Sahel', 'Vazirmatn';
-                font-size: 16px;
-                font-weight: bold;
-                color: white;
-                background-color: #007bff;
-                border: none;
-                border-radius: 10px;
-                padding: 10px;
-            }
-            QPushButton:hover {
-                background-color: #0056b3;
-            }
-        """)
+        login_btn = QPushButton("ورود")
+        login_btn.clicked.connect(self.check_login)
+        layout.addWidget(login_btn)
 
     def check_login(self):
-        entered_username = self.username_input.text()
-        entered_password = self.password_input.text()
-
-        if entered_username == self.username and entered_password == self.password:
+        username = self.username_entry.text()
+        password = self.password_entry.text()
+        
+        if self.parent().check_credentials(username, password):
             self.accept()
         else:
-            QMessageBox.warning(self, "خطای ورود", "نام کاربری یا رمز عبور اشتباه است.")
-            self.username_input.clear()
-            self.password_input.clear()
+            QMessageBox.warning(self, "خطا", "نام کاربری یا رمز عبور اشتباه است.")
 
-# --- فرم ثبت مبلغ پرداختی جدید ---
+
+class ChangePasswordDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("تغییر نام کاربری و رمز عبور")
+        self.setFixedSize(400, 250)
+        self.setLayoutDirection(Qt.RightToLeft)
+        
+        layout = QVBoxLayout(self)
+
+        info_label = QLabel("برای تغییر، لطفاً نام کاربری و رمز عبور فعلی خود را وارد کنید.")
+        layout.addWidget(info_label)
+
+        self.old_username_entry = QLineEdit()
+        self.old_username_entry.setPlaceholderText("نام کاربری فعلی")
+        layout.addWidget(self.old_username_entry)
+        
+        self.old_password_entry = QLineEdit()
+        self.old_password_entry.setPlaceholderText("رمز عبور فعلی")
+        self.old_password_entry.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.old_password_entry)
+
+        self.new_username_entry = QLineEdit()
+        self.new_username_entry.setPlaceholderText("نام کاربری جدید (اختیاری)")
+        layout.addWidget(self.new_username_entry)
+
+        self.new_password_entry = QLineEdit()
+        self.new_password_entry.setPlaceholderText("رمز عبور جدید (اختیاری)")
+        self.new_password_entry.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.new_password_entry)
+
+        buttons_layout = QHBoxLayout()
+        self.change_btn = QPushButton("ثبت تغییرات")
+        self.change_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("انصراف")
+        self.cancel_btn.clicked.connect(self.reject)
+        
+        buttons_layout.addWidget(self.change_btn)
+        buttons_layout.addWidget(self.cancel_btn)
+        layout.addLayout(buttons_layout)
+
+    def get_new_credentials(self):
+        return (self.old_username_entry.text(), 
+                self.old_password_entry.text(), 
+                self.new_username_entry.text(), 
+                self.new_password_entry.text())
+
+# --- کلاس‌های دیالوگ ---
+
 class AddPaymentDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ثبت مبلغ پرداختی جدید")
-        self.setFixedSize(350, 150)
+        self.setWindowTitle("افزودن پرداخت جدید")
+        self.setFixedSize(300, 150)
         self.setLayoutDirection(Qt.RightToLeft)
         self.amount = 0
         self.init_ui()
 
     def init_ui(self):
-        main_layout = QVBoxLayout(self)
-
-        amount_layout = QHBoxLayout()
-        amount_layout.setDirection(QHBoxLayout.RightToLeft)
-        amount_label = QLabel("مبلغ دریافتی:")
-        self.amount_input = QLineEdit()
-        self.amount_input.setPlaceholderText("مبلغ را به تومان وارد کنید...")
-        self.amount_input.setAlignment(Qt.AlignRight)
-        amount_layout.addWidget(amount_label)
-        amount_layout.addWidget(self.amount_input)
-        main_layout.addLayout(amount_layout)
-
-        save_button = QPushButton("ذخیره")
-        save_button.clicked.connect(self.save_amount)
-        main_layout.addWidget(save_button)
-    
-    def save_amount(self):
-        try:
-            amount_text = self.amount_input.text().strip().replace(",", "").replace(".", "")
-            if amount_text:
-                self.amount = float(amount_text)
-                self.accept()
-            else:
-                QMessageBox.warning(self, "خطا", "لطفاً مبلغ را وارد کنید.")
-        except ValueError:
-            QMessageBox.warning(self, "خطا", "لطفاً یک عدد معتبر وارد کنید.")
-
-# --- فرم ویرایش پرداخت ---
-class EditPaymentDialog(QDialog):
-    def __init__(self, amount, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("ویرایش مبلغ پرداختی")
-        self.setFixedSize(350, 150)
-        self.setLayoutDirection(Qt.RightToLeft)
-        self.new_amount = 0
-        self.init_ui(amount)
-
-    def init_ui(self, amount):
-        main_layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         
-        amount_layout = QHBoxLayout()
-        amount_layout.setDirection(QHBoxLayout.RightToLeft)
-        amount_label = QLabel("مبلغ جدید:")
-        self.amount_input = QLineEdit()
-        self.amount_input.setAlignment(Qt.AlignRight)
-        self.amount_input.setText(f"{amount:,.0f}")
-        amount_layout.addWidget(amount_label)
-        amount_layout.addWidget(self.amount_input)
-        main_layout.addLayout(amount_layout)
+        form_layout = QFormLayout()
+        self.amount_entry = QLineEdit()
+        self.amount_entry.setPlaceholderText("مبلغ به تومان")
+        self.amount_entry.setAlignment(Qt.AlignRight)
+        form_layout.addRow("مبلغ:", self.amount_entry)
+        layout.addLayout(form_layout)
+        
+        add_btn = QPushButton("ثبت پرداخت")
+        add_btn.clicked.connect(self.save_payment)
+        layout.addWidget(add_btn)
 
-        save_button = QPushButton("ذخیره")
-        save_button.clicked.connect(self.save_amount)
-        main_layout.addWidget(save_button)
-    
-    def save_amount(self):
+    def save_payment(self):
         try:
-            amount_text = self.amount_input.text().strip().replace(",", "").replace(".", "")
-            if amount_text:
-                self.new_amount = float(amount_text)
-                self.accept()
-            else:
-                QMessageBox.warning(self, "خطا", "لطفاً مبلغ را وارد کنید.")
+            amount_text = self.amount_entry.text().replace(",", "").replace(".", "")
+            self.amount = int(float(amount_text))
+            self.accept()
         except ValueError:
             QMessageBox.warning(self, "خطا", "لطفاً یک عدد معتبر وارد کنید.")
 
-# --- فرم تاریخچه پرداختی ---
+class EditPaymentDialog(QDialog):
+    def __init__(self, current_amount, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("ویرایش پرداخت")
+        self.setFixedSize(300, 150)
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.current_amount = current_amount
+        self.new_amount = 0
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        form_layout = QFormLayout()
+        self.amount_entry = QLineEdit()
+        self.amount_entry.setAlignment(Qt.AlignRight)
+        self.amount_entry.setText(f"{self.current_amount:,.0f}")
+        form_layout.addRow("مبلغ جدید:", self.amount_entry)
+        layout.addLayout(form_layout)
+        
+        edit_btn = QPushButton("ذخیره تغییرات")
+        edit_btn.clicked.connect(self.save_changes)
+        layout.addWidget(edit_btn)
+
+    def save_changes(self):
+        try:
+            amount_text = self.amount_entry.text().replace(",", "").replace(".", "")
+            self.new_amount = int(float(amount_text))
+            self.accept()
+        except ValueError:
+            QMessageBox.warning(self, "خطا", "لطفاً یک عدد معتبر وارد کنید.")
+
+
 class PaymentHistoryDialog(QDialog):
     def __init__(self, person_data, parent=None):
         super().__init__(parent)
@@ -480,7 +319,7 @@ class PaymentHistoryDialog(QDialog):
         
         row = selected_rows[0].row()
         if QMessageBox.question(self, "حذف پرداخت", "آیا مطمئن هستید که می‌خواهید این پرداخت را حذف کنید؟",
-                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                                 QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             del self.person_data["payments"][row]
             self.parent.save_data()
             self.populate_table()
@@ -488,19 +327,19 @@ class PaymentHistoryDialog(QDialog):
             QMessageBox.information(self, "موفقیت", "پرداخت با موفقیت حذف شد.")
 
 
-# --- برنامه اصلی ---
+# --- کلاس اصلی برنامه ---
 class BaseApp(QMainWindow):
-    """
-    برنامه اصلی برای مدیریت اشخاص و خدمات با قابلیت ذخیره‌سازی محلی اطلاعات.
-    """
     def __init__(self):
         super().__init__()
 
-        # تنظیمات پنجره اصلی
-        self.setWindowTitle("نرم افزار بسیار ساده مدیریت بدهکاران - --------------------  تنظیم کننده علی حدادیان   09153353994")
-        self.setFixedSize(900, 650)
+        # Credentials management
+        self.current_username = ""
+        self.current_password = ""
+        self.load_credentials()
 
-        # مرکز صفحه
+        # تنظیمات پنجره اصلی
+        self.setWindowTitle("نرم افزار بسیار ساده مدیریت بدهکاران - تنظیم کننده علی حدادیان 09153353994")
+        self.setFixedSize(900, 650)
         screen = QApplication.primaryScreen().geometry()
         x = (screen.width() - self.width()) // 2
         y = (screen.height() - self.height()) // 2
@@ -512,7 +351,6 @@ class BaseApp(QMainWindow):
         self.setCentralWidget(self.main_widget)
         self.main_layout = QVBoxLayout(self.main_widget)
 
-        # داده‌ها
         self.data_file = "data.json"
         self.data = {"persons": {}, "services": {}}
         self.selected_person_code = None
@@ -549,7 +387,6 @@ class BaseApp(QMainWindow):
 
         self.ad_layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
-        # نام شخص + خلاصه مالی
         self.person_name_label = QLabel("")
         self.person_name_label.setAlignment(Qt.AlignCenter)
         self.ad_layout.addWidget(self.person_name_label)
@@ -559,7 +396,6 @@ class BaseApp(QMainWindow):
         self.person_debt_label.setAlignment(Qt.AlignCenter)
         self.ad_layout.addWidget(self.person_debt_label)
         
-        # NEW: Button for adding payment
         self.show_payment_history_btn = QPushButton("نمایش تاریخچه پرداختی", objectName="controlButton")
         self.show_payment_history_btn.clicked.connect(self.show_payment_history)
         self.ad_layout.addWidget(self.show_payment_history_btn)
@@ -591,7 +427,6 @@ class BaseApp(QMainWindow):
         service_label.setAlignment(Qt.AlignCenter)
         self.service_layout.addWidget(service_label)
 
-        # فیلدهای خدمات (بدون مبلغ پرداختی ردیفی)
         service_id_layout = QHBoxLayout()
         service_id_layout.setDirection(QHBoxLayout.RightToLeft)
         service_id_label = QLabel("کد:")
@@ -623,7 +458,6 @@ class BaseApp(QMainWindow):
         service_count_layout.addWidget(self.service_count_entry)
         self.service_layout.addLayout(service_count_layout)
 
-        # --- NEW: واحد ---
         service_unit_layout = QHBoxLayout()
         service_unit_layout.setDirection(QHBoxLayout.RightToLeft)
         service_unit_label = QLabel("واحد:")
@@ -746,6 +580,10 @@ class BaseApp(QMainWindow):
         person_mobile_layout.addWidget(person_mobile_label)
         person_mobile_layout.addWidget(self.person_mobile_entry)
         self.person_layout.addLayout(person_mobile_layout)
+        
+        self.change_password_btn = QPushButton("تغییر نام کاربری/رمز عبور")
+        self.change_password_btn.clicked.connect(self.show_change_password_dialog)
+        self.person_layout.addWidget(self.change_password_btn)
 
         self.person_layout.addSpacerItem(QSpacerItem(20, 5, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
@@ -796,26 +634,70 @@ class BaseApp(QMainWindow):
         self.data_tree.setLayoutDirection(Qt.RightToLeft)
         self.bottom_layout.addWidget(self.data_tree)
 
-        # اتصال سیگنال‌ها
-        self.data_tree.itemClicked.connect(self.handle_table_single_click)
+        self.data_tree.currentItemChanged.connect(self.handle_table_single_click)
         self.data_tree.itemDoubleClicked.connect(self.handle_table_double_click)
-
-        # سیگنال‌های محاسبات قیمت فروش
+        
         self.service_price_entry.editingFinished.connect(self.format_and_calculate)
         self.service_percent_entry.editingFinished.connect(self.format_and_calculate)
-        self.service_count_entry.editingFinished.connect(self.format_and_calculate)
+        self.service_count_entry.editingFinished.connect(self.handle_price_input)
         self.service_price_entry.textChanged.connect(self.handle_price_input)
         self.service_percent_entry.textChanged.connect(self.handle_price_input)
         self.service_count_entry.textChanged.connect(self.handle_price_input)
 
-        # سیگنال جستجوی زنده
         self.person_search_entry.textChanged.connect(self.search_persons)
         self.service_search_entry.textChanged.connect(self.search_services)
 
-        # بارگذاری
         self.load_data()
-        self.update_person_buttons_state() # Initial state
+        self.update_person_buttons_state()
 
+    def load_credentials(self):
+        if os.path.exists(CREDENTIALS_FILE):
+            try:
+                with open(CREDENTIALS_FILE, 'r', encoding='utf-8') as f:
+                    creds = json.load(f)
+                    self.current_username = creds.get("username", "admin")
+                    self.current_password = creds.get("password", "12345")
+            except (IOError, json.JSONDecodeError):
+                self.save_credentials("admin", "12345")
+                self.current_username = "admin"
+                self.current_password = "12345"
+        else:
+            self.save_credentials("admin", "12345")
+            self.current_username = "admin"
+            self.current_password = "12345"
+
+    def save_credentials(self, username, password):
+        creds = {"username": username, "password": password}
+        try:
+            with open(CREDENTIALS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(creds, f, ensure_ascii=False, indent=4)
+        except IOError as e:
+            QMessageBox.warning(self, "خطا در ذخیره", f"خطا در ذخیره اطلاعات ورود: {e}")
+
+    def check_credentials(self, username, password):
+        return username == self.current_username and password == self.current_password
+        
+    def show_change_password_dialog(self):
+        dialog = ChangePasswordDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            old_user, old_pass, new_user, new_pass = dialog.get_new_credentials()
+
+            if self.check_credentials(old_user, old_pass):
+                if not new_user and not new_pass:
+                    QMessageBox.warning(self, "خطا", "لطفاً نام کاربری یا رمز عبور جدید را وارد کنید.")
+                    return
+
+                final_user = new_user if new_user else self.current_username
+                final_pass = new_pass if new_pass else self.current_password
+
+                self.save_credentials(final_user, final_pass)
+                self.current_username = final_user
+                self.current_password = final_pass
+                
+                QMessageBox.information(self, "موفقیت", "نام کاربری و/یا رمز عبور با موفقیت تغییر کرد.")
+            else:
+                QMessageBox.critical(self, "خطا", "نام کاربری یا رمز عبور فعلی اشتباه است.")
+                
     def set_ui_style(self):
         """Set style using CSS"""
         stylesheet = """
@@ -873,7 +755,6 @@ class BaseApp(QMainWindow):
 
     def format_number(self, value):
         try:
-            # پاک کردن جداکننده‌های قبلی و تبدیل به عدد
             cleaned_value = str(value).replace(",", "").replace(".", "")
             if not cleaned_value:
                 return ""
@@ -881,19 +762,7 @@ class BaseApp(QMainWindow):
             return f"{num:,.0f}"
         except (ValueError, IndexError):
             return str(value)
-
-    def format_and_calculate(self):
-        # Format numbers on field exit
-        sender = self.sender()
-        if sender == self.service_count_entry:
-            self.service_count_entry.setText(self.format_number(self.service_count_entry.text()))
-        elif sender == self.service_price_entry:
-            self.service_price_entry.setText(self.format_number(self.service_price_entry.text()))
-        elif sender == self.service_percent_entry:
-            self.service_percent_entry.setText(self.format_number(self.service_percent_entry.text()))
         
-        self.handle_price_input()
-
     def load_data(self):
         if os.path.exists(self.data_file):
             try:
@@ -950,9 +819,6 @@ class BaseApp(QMainWindow):
         self.delete_service_btn.setEnabled(False)
 
     def update_person_buttons_state(self):
-        """
-        Enables or disables person-related buttons based on whether a person is selected.
-        """
         is_person_selected = bool(self.selected_person_code)
         self.show_payment_history_btn.setEnabled(is_person_selected)
         self.print_invoice_btn.setEnabled(is_person_selected)
@@ -969,13 +835,12 @@ class BaseApp(QMainWindow):
         if not codes:
             return 1
         return max(codes) + 1
-
+        
     def handle_price_input(self):
         try:
-            # پاک کردن کاما و نقطه از ورودی
-            count_text = self.service_count_entry.text().replace(",", "").replace(".", "")
-            price_text = self.service_price_entry.text().replace(",", "").replace(".", "")
-            percent_text = self.service_percent_entry.text().replace(",", "").replace(".", "")
+            count_text = self.service_count_entry.text().strip().replace(",", "")
+            price_text = self.service_price_entry.text().strip().replace(",", "")
+            percent_text = self.service_percent_entry.text().strip().replace(",", "")
 
             count = float(count_text or 0)
             price = float(price_text or 0)
@@ -985,7 +850,16 @@ class BaseApp(QMainWindow):
             self.service_sales_price_entry.setText(f"{total_price:,.0f}")
         except ValueError:
             self.service_sales_price_entry.setText("خطا در محاسبه")
-    
+
+    def format_and_calculate(self):
+        sender = self.sender()
+        if sender == self.service_price_entry:
+            self.service_price_entry.setText(self.format_number(self.service_price_entry.text()))
+        elif sender == self.service_percent_entry:
+            self.service_percent_entry.setText(self.format_number(self.service_percent_entry.text()))
+        
+        self.handle_price_input()
+
     def get_paid_total(self, person_code):
         return sum(item.get('amount', 0) for item in self.data["persons"][person_code].get("payments", []))
 
@@ -1040,30 +914,31 @@ class BaseApp(QMainWindow):
             return
 
         self.data_tree.clear()
-        self.data_tree.setHeaderLabels(["کد خدمت", "نام کالا", "تعداد", "واحد", "قیمت واحد", "درصد", "قیمت کل"])
+        self.data_tree.setHeaderLabels(["ردیف", "کد خدمت", "نام کالا", "تعداد", "واحد", "قیمت واحد", "درصد", "قیمت کل"])
         self.back_to_persons_btn.setVisible(True)
         self.update_person_buttons_state()
         self.clear_service_entries()
 
         person_services = self.data["persons"][self.selected_person_code].get("services", {})
-        for code, service in person_services.items():
+        for i, (code, service) in enumerate(person_services.items()):
             item = QTreeWidgetItem([
+                str(i + 1),
                 str(code),
                 service["name"],
-                self.format_number(service.get("count", 0)),
+                str(service.get("count", 0)),
                 service.get("unit", ""),
                 self.format_number(service.get("price", 0)),
                 f"{float(service.get('percent', 0)):,.0f}%",
                 self.format_number(service.get("total_price", 0))
             ])
             self.data_tree.addTopLevelItem(item)
-
-    def handle_table_single_click(self, item, column):
-        """
-        Handles single clicks to load data into entry fields, for both persons and services.
-        """
+    
+    def handle_table_single_click(self, current, previous):
+        if not current:
+            return
+            
         current_headers = [self.data_tree.headerItem().text(i) for i in range(self.data_tree.header().count())]
-        clicked_code = item.text(0)
+        clicked_code = current.text(0)
 
         if "نام خانوادگی" in current_headers:
             self.clear_service_entries()
@@ -1074,14 +949,14 @@ class BaseApp(QMainWindow):
             self.save_person_btn.setText("ذخیره تغییرات")
             
         elif "نام کالا" in current_headers:
-            self.selected_service_code = clicked_code
-            self.load_service_data(clicked_code)
+            # اینجا باید کد خدمت را از ستون دوم بخوانیم
+            self.selected_service_code = current.text(1)
+            self.load_service_data(self.selected_service_code)
             self.is_editing_service = True
             self.save_service_btn.setText("ذخیره تغییرات")
             self.delete_service_btn.setEnabled(True)
 
     def handle_table_double_click(self, item, column):
-        """ Handles double clicks to show services for a person. """
         current_headers = [self.data_tree.headerItem().text(i) for i in range(self.data_tree.header().count())]
         clicked_code = item.text(0)
 
@@ -1124,7 +999,7 @@ class BaseApp(QMainWindow):
 
         code = self.person_id_entry.text()
         if QMessageBox.question(self, "حذف شخص", "آیا مطمئن هستید که می‌خواهید این شخص را حذف کنید؟ این عمل برگشت‌ناپذیر است.",
-                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                                 QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             if code in self.data["persons"]:
                 del self.data["persons"][code]
                 self.save_data()
@@ -1137,60 +1012,60 @@ class BaseApp(QMainWindow):
             return
         
         name = self.service_name_entry.text().strip()
-        count_text = self.service_count_entry.text().strip().replace(",", "").replace(".", "")
+        count_text = self.service_count_entry.text().strip().replace(",", "")
         unit = self.service_unit_entry.text().strip()
-        price_text = self.service_price_entry.text().strip().replace(",", "").replace(".", "")
-        percent_text = self.service_percent_entry.text().strip().replace(",", "").replace(".", "")
+        price_text = self.service_price_entry.text().strip().replace(",", "")
+        percent_text = self.service_percent_entry.text().strip().replace(",", "")
 
         if not name or not count_text or not unit or not price_text or not percent_text:
             QMessageBox.warning(self, "خطا", "لطفاً تمام فیلدهای خدمات را پر کنید.")
             return
 
         try:
-            count = float(count_text)
+            count = int(count_text)
             price = float(price_text)
             percent = float(percent_text)
             total_price = (count * price) * (1 + (percent / 100))
         except ValueError:
-            QMessageBox.warning(self, "خطا", "لطفاً مقادیر عددی معتبر و بدون اعشار وارد کنید.")
+            QMessageBox.warning(self, "خطا", "لطفاً مقادیر عددی معتبر وارد کنید.")
             return
 
         if self.is_editing_service and self.selected_service_code:
             code = self.selected_service_code
             self.data["persons"][self.selected_person_code]["services"][code] = {
                 "name": name,
-                "count": str(count),
+                "count": count,
                 "unit": unit,
-                "price": str(price),
-                "percent": str(percent),
-                "total_price": str(total_price)
+                "price": price,
+                "percent": percent,
+                "total_price": total_price
             }
             if code in self.data["services"]:
-                 self.data["services"][code] = {
+                self.data["services"][code] = {
                     "name": name,
-                    "count": str(count),
+                    "count": count,
                     "unit": unit,
-                    "price": str(price),
-                    "percent": str(percent),
-                    "total_price": str(total_price)
+                    "price": price,
+                    "percent": percent,
+                    "total_price": total_price
                 }
         else:
             service_code = str(self.generate_service_code())
             self.data["persons"][self.selected_person_code]["services"][service_code] = {
                 "name": name,
-                "count": str(count),
+                "count": count,
                 "unit": unit,
-                "price": str(price),
-                "percent": str(percent),
-                "total_price": str(total_price)
+                "price": price,
+                "percent": percent,
+                "total_price": total_price
             }
             self.data["services"][service_code] = {
                 "name": name,
-                "count": str(count),
+                "count": count,
                 "unit": unit,
-                "price": str(price),
-                "percent": str(percent),
-                "total_price": str(total_price)
+                "price": price,
+                "percent": percent,
+                "total_price": total_price
             }
 
         self.save_data()
@@ -1210,7 +1085,7 @@ class BaseApp(QMainWindow):
 
         code = self.service_id_entry.text()
         if QMessageBox.question(self, "حذف خدمت", "آیا مطمئن هستید که می‌خواهید این خدمت را حذف کنید؟ این عمل برگشت‌ناپذیر است.",
-                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                                 QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             if code in self.data["persons"][self.selected_person_code]["services"]:
                 del self.data["persons"][self.selected_person_code]["services"][code]
                 if code in self.data["services"]:
@@ -1237,7 +1112,7 @@ class BaseApp(QMainWindow):
             service = person_services[code]
             self.service_id_entry.setText(str(code))
             self.service_name_entry.setText(service["name"])
-            self.service_count_entry.setText(self.format_number(service.get("count", 0)))
+            self.service_count_entry.setText(str(service.get("count", 0)))
             self.service_unit_entry.setText(service.get("unit", ""))
             self.service_price_entry.setText(self.format_number(service.get("price", 0)))
             self.service_percent_entry.setText(self.format_number(service.get("percent", 0)))
@@ -1271,12 +1146,13 @@ class BaseApp(QMainWindow):
             return
         text = text.lower()
         person_services = self.data["persons"][self.selected_person_code].get("services", {})
-        for code, service in person_services.items():
+        for i, (code, service) in enumerate(person_services.items()):
             if text in service["name"].lower() or text in str(code).lower():
                 item = QTreeWidgetItem([
+                    str(i + 1),
                     str(code),
                     service["name"],
-                    self.format_number(service.get("count", 0)),
+                    str(service.get("count", 0)),
                     service.get("unit", ""),
                     self.format_number(service.get("price", 0)),
                     f"{float(service.get('percent', 0)):,.0f}%",
@@ -1288,35 +1164,38 @@ class BaseApp(QMainWindow):
         if not self.selected_person_code:
             QMessageBox.warning(self, "خطا", "لطفا یک شخص را برای چاپ صورتحساب انتخاب کنید.")
             return
-
-        person_data = self.data["persons"][self.selected_person_code]
-        person_name = f"{person_data['name']} {person_data['family']}"
-        paid_total = self.get_paid_total(self.selected_person_code)
-        invoice_html = self.generate_invoice_html(person_name, person_data["services"], paid_total)
-
-        printer = QPrinter()
-        dialog = QPrintDialog(printer, self)
-        if dialog.exec() == QDialog.Accepted:
-            document = QTextDocument()
-            document.setHtml(invoice_html)
-            document.print(printer)
-            QMessageBox.information(self, "چاپ", "صورتحساب با موفقیت ارسال شد.")
+        try:
+            person_data = self.data["persons"][self.selected_person_code]
+            person_name = f"{person_data['name']} {person_data['family']}"
+            paid_total = self.get_paid_total(self.selected_person_code)
+            invoice_html = self.generate_invoice_html(person_name, person_data["services"], paid_total)
+            printer = QPrinter()
+            dialog = QPrintDialog(printer, self)
+            if dialog.exec() == QDialog.Accepted:
+                document = QTextDocument()
+                document.setHtml(invoice_html)
+                document.print(printer)
+                QMessageBox.information(self, "چاپ", "صورتحساب با موفقیت ارسال شد.")
+        except Exception as e:
+            QMessageBox.critical(self, "خطای چاپ", f"خطا در هنگام چاپ صورتحساب رخ داد: \n{e}")
 
     def generate_invoice_html(self, person_name, services, paid_amount):
         total_price = sum(float(s.get("total_price", 0)) for s in services.values())
         remaining_debt = total_price - paid_amount
 
         table_rows = ""
-        for code, service in services.items():
+        # ترتیب نمایش از راست به چپ: ردیف، کد خدمت، نام کالا، ...
+        for i, (code, service) in enumerate(services.items()):
             table_rows += f"""
             <tr>
                 <td>{self.format_number(service.get('total_price', 0))}</td>
                 <td>{float(service.get('percent', 0)):,.0f}%</td>
                 <td>{self.format_number(service.get('price', 0))}</td>
                 <td>{service.get('unit', '')}</td>
-                <td>{self.format_number(service.get('count', 0))}</td>
+                <td>{service.get('count', 0)}</td>
                 <td>{service.get('name', '')}</td>
                 <td>{code}</td>
+                <td>{i + 1}</td>
             </tr>
             """
 
@@ -1330,11 +1209,38 @@ class BaseApp(QMainWindow):
                     font-family: 'B Nazanin', 'Sahel', 'Vazirmatn', sans-serif;
                     direction: rtl;
                     text-align: right;
+                    font-size: 12px;
+                    margin: 0;
+                    padding: 0;
+                }}
+                .invoice-container {{
+                    width: 21cm; /* A4 width */
+                    margin: 0 auto;
+                    padding: 1.5cm;
+                    box-sizing: border-box;
+                }}
+                .header {{
+                    text-align: center;
+                    margin-bottom: 30px;
+                }}
+                .header h2 {{
+                    font-size: 24px;
+                    margin: 0 0 5px 0;
+                }}
+                .header p {{
+                    margin: 0;
                     font-size: 14px;
                 }}
-                .header {{ text-align: center; margin-bottom: 20px; }}
-                .invoice-details {{ margin-bottom: 20px; }}
-                .invoice-details p {{ margin: 5px 0; }}
+                .invoice-details {{
+                    display: flex;
+                    justify-content: space-between;
+                    margin-bottom: 20px;
+                    padding: 10px;
+                }}
+                .invoice-details p {{
+                    margin: 5px 0;
+                    font-size: 14px;
+                }}
                 table {{
                     width: 100%;
                     border-collapse: collapse;
@@ -1343,57 +1249,77 @@ class BaseApp(QMainWindow):
                 th, td {{
                     border: 1px solid #000;
                     padding: 8px;
-                    text-align: right;
+                    text-align: center;
+                    white-space: nowrap;
                 }}
-                th {{ background-color: #f2f2f2; }}
+                th {{
+                    background-color: #f2f2f2;
+                    font-weight: bold;
+                }}
                 .summary {{
                     margin-top: 20px;
-                    text-align: left;
-                    float: left;
+                    border: 1px solid #000;
+                    padding: 10px;
+                    border-radius: 5px;
                     width: 40%;
+                    float: right;
+                    box-sizing: border-box;
                 }}
                 .signature {{
                     margin-top: 50px;
                     text-align: left;
+                    float: left;
+                    width: 50%;
+                    box-sizing: border-box;
                 }}
-                .total-row {{ font-weight: bold; background-color: #e6e6e6; }}
+                .clearfix::after {{
+                    content: "";
+                    clear: both;
+                    display: table;
+                }}
+                .total-row {{ font-weight: bold; }}
             </style>
         </head>
         <body>
-            <div class="header">
-                <h2>صورتحساب خدمات</h2>
-                <p>خدمات فنی مهندسی دهقانی</p>
-                <p>تلفن: ۰۹۱۵۳۳۵۳۹۹۴</p>
-            </div>
-            <div class="invoice-details">
-                <p><strong>تاریخ:</strong> {datetime.date.today().strftime('%Y-%m-%d')}</p>
-                <p><strong>نام شخص:</strong> {person_name}</p>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>قیمت کل</th>
-                        <th>درصد</th>
-                        <th>قیمت واحد</th>
-                        <th>واحد</th>
-                        <th>تعداد</th>
-                        <th>نام کالا</th>
-                        <th>کد خدمت</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {table_rows}
-                </tbody>
-            </table>
-            <div class="summary">
-                <p class="total-row"><strong>جمع کل خرید:</strong> {self.format_number(total_price)} تومان</p>
-                <p class="total-row"><strong>مبلغ پرداختی:</strong> {self.format_number(paid_amount)} تومان</p>
-                <p class="total-row"><strong>مانده بدهکاری:</strong> {self.format_number(remaining_debt)} تومان</p>
-            </div>
-            <div class="signature">
-                <p>امضا و مهر:</p>
-                <br><br>
-                <p>-------------------------</p>
+            <div class="invoice-container">
+                <div class="header">
+                    <h2>صورتحساب خدمات</h2>
+                    <p>خدمات فنی مهندسی دهقانی</p>
+                    <p>تلفن: ۰۹۱۵۳۳۵۳۹۹۴</p>
+                </div>
+                <div class="invoice-details">
+                    <p><strong>تاریخ:</strong> {datetime.date.today().strftime('%Y-%m-%d')}</p>
+                    <p><strong>نام شخص:</strong> {person_name}</p>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;">قیمت کل</th>
+                            <th style="width: 10%;">درصد</th>
+                            <th style="width: 15%;">قیمت واحد</th>
+                            <th style="width: 10%;">واحد</th>
+                            <th style="width: 10%;">تعداد</th>
+                            <th style="width: 25%;">نام کالا</th>
+                            <th style="width: 5%;">کد خدمت</th>
+                            <th style="width: 5%;">ردیف</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {table_rows}
+                    </tbody>
+                </table>
+                <div class="clearfix">
+                    <div class="summary">
+                        <p class="total-row"><strong>جمع کل خرید:</strong> {self.format_number(total_price)} تومان</p>
+                        <p class="total-row"><strong>مبلغ پرداختی:</strong> {self.format_number(paid_amount)} تومان</p>
+                        <p class="total-row"><strong>مانده بدهکاری:</strong> {self.format_number(remaining_debt)} تومان</p>
+                    </div>
+                    <div class="signature">
+                        <p>امضا و مهر:</p>
+                        <br><br>
+                        <p>-------------------------</p>
+                    </div>
+                </div>
             </div>
         </body>
         </html>
@@ -1403,7 +1329,8 @@ class BaseApp(QMainWindow):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     
-    # Check for license
+    main_app = BaseApp()
+    
     license_manager = LicenseManager()
     if not license_manager.is_licensed:
         license_dialog = LicenseDialog(license_manager)
@@ -1414,10 +1341,8 @@ if __name__ == '__main__':
             QMessageBox.warning(None, "پایان", "شما بدون لایسنس نمی‌توانید از برنامه استفاده کنید.")
             sys.exit(-1)
 
-    # If licensed, proceed to login
-    login_form = LoginForm()
+    login_form = LoginForm(main_app)
     if login_form.exec() == QDialog.Accepted:
-        main_app = BaseApp()
         main_app.show()
         sys.exit(app.exec())
     else:
